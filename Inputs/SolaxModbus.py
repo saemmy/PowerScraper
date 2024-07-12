@@ -92,6 +92,7 @@ class SolaxModbus(object):
     host = None
     config = None
     factory = None
+    requestedBatteryPower = 0
     powerBudgets = []
 
     ##
@@ -138,10 +139,10 @@ class SolaxModbus(object):
     def solaxRegisterCallback(self, result, completionCallback):
         vals = {}
         vals['name'] = self.host;
-        vals['#SolaxClient'] = self.factory.getClient()
+        vals['Requested Battery Power'] = self.requestedBatteryPower
         vals['Grid Voltage'] = unsigned16(result, 0x00) / 10
         vals['Grid Current'] = signed16(result, 0x01) / 10
-        vals['Measured Power'] = signed16(result, 0x02)
+        vals['Inverter Power'] = signed16(result, 0x02)
         vals['PV1 Voltage'] = unsigned16(result, 0x03) / 10
         vals['PV2 Voltage'] = unsigned16(result, 0x04) / 10
         vals['PV1 Current'] = unsigned16(result, 0x05) / 10
@@ -168,14 +169,14 @@ class SolaxModbus(object):
 
             vals['Battery Demand'] = 0 if vals['Battery Capacity'] >= fullLimit else inverter['max-charge']
 
-        vals['Battery Energy Charged'] = unsigned32(result, 0x1D) / 10
+        vals['Battery Energy Discharged'] = unsigned32(result, 0x1D) / 10
         vals['BMS Warning'] = unsigned16(result, 0x1F)
-        vals['Battery Energy Discharged'] = unsigned32(result, 0x20) / 10
+        vals['Battery Energy Charged'] = unsigned32(result, 0x20) / 10
         vals['Battery State of Health'] = unsigned16(result, 0x23)
         vals['Inverter Fault'] = unsigned32(result, 0x40)
         vals['Charger Fault'] = unsigned16(result, 0x42)
         vals['Manager Fault'] = unsigned16(result, 0x43)
-        vals['Inverter Power'] = signed32(result, 0x46) # Power from the grid +ve, to grid -ve
+        vals['Measured Power'] = signed32(result, 0x46) # Power from the grid +ve, to grid -ve
         vals['Feed In Energy'] = unsigned32(result, 0x48) / 100 # Energy delivered to the grid, kWh
         vals['Consumed Energy'] = unsigned32(result, 0x4A) / 100 # Energy consumed from the grid, kWh
         vals['EPS Voltage'] = unsigned16(result, 0x4C) / 10
@@ -195,4 +196,18 @@ class SolaxModbus(object):
 
         vals['Usage'] = vals['Inverter Power'] - vals['Measured Power']
 
-        completionCallback(vals)
+        completionCallback(vals, self)
+
+    def wakeupInverter(self, result):
+        result = self.factory.getClient().write_register(0x90, 1)
+
+    def chargeBattery(self, power):
+        self.requestedBatteryPower = power
+
+        # Convert to int16
+        if power < 0:
+            power += 65536
+
+        result = self.factory.getClient().write_register(0x51, power)
+        if power != 0:
+            result.addCallback(self.wakeupInverter)
